@@ -1,0 +1,8 @@
+title: creeperCam
+description: A self-built, Home Assistant-connected camera system for tarantula and frog enclosures (Raspberry Pi + Camera Module 3 Wide NoIR + printed pods)
+remote_theme: pages-themes/cayman@v0.2.0
+plugins:
+  - jekyll-remote-theme
+  - jekyll-github-metadata
+show_downloads: false
+markdown: kramdown

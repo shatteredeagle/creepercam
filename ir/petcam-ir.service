@@ -1,0 +1,14 @@
+[Unit]
+Description=Petcam IR light (HA MQTT light on hardware PWM)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+EnvironmentFile=/etc/petcam-ir.env
+ExecStart=/usr/bin/python3 /opt/petcam-ir/petcam-ir.py
+ExecStopPost=/bin/sh -c 'echo 0 > /sys/class/pwm/pwmchip0/pwm0/duty_cycle || true'
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

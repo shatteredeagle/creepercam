@@ -1,0 +1,12 @@
+[Unit]
+Description=Petcam web UI
+After=network-online.target mediamtx.service
+
+[Service]
+User=pi
+WorkingDirectory=/opt/petcam-ui
+ExecStart=/usr/bin/python3 /opt/petcam-ui/app.py
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

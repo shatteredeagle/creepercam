@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Petcam</title>
+<style>
+:root { --bg:#f4f5f7; --card:#fff; --fg:#1c1f24; --mute:#6b7280; --line:#d8dce3; --acc:#2563eb; --bad:#dc2626; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg:#0f1115; --card:#181b21; --fg:#e8eaee; --mute:#9aa1ad; --line:#2a2f38; --acc:#60a5fa; --bad:#f87171; }
+}
+* { box-sizing: border-box; }
+body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.4 system-ui, sans-serif; }
+main { max-width:980px; margin:0 auto; padding:16px; display:grid; gap:16px; }
+header { display:flex; justify-content:space-between; align-items:baseline; flex-wrap:wrap; gap:8px; }
+h1 { font-size:20px; margin:0; }
+.card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px; }
+.view { aspect-ratio:16/9; background:#000; border-radius:8px; overflow:hidden; }
+.view iframe { width:100%; height:100%; border:0; }
+.row { display:grid; grid-template-columns:130px 1fr 52px; align-items:center; gap:8px; margin:8px 0; }
+.row.sel { grid-template-columns:130px 1fr; }
+label { color:var(--mute); }
+input[type=range] { width:100%; }
+select, button { font:inherit; padding:6px 10px; border-radius:6px; border:1px solid var(--line); background:var(--card); color:var(--fg); }
+button { cursor:pointer; }
+button.primary { background:var(--acc); border-color:var(--acc); color:#fff; }
+.bar { display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; }
+.stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); gap:10px; }
+.stat b { display:block; font-size:18px; }
+.stat span { color:var(--mute); font-size:13px; }
+#msg { min-height:1.4em; color:var(--mute); }
+#msg.err { color:var(--bad); }
+</style>
+</head>
+<body>
+<main>
+  <header><h1>Petcam <span id="host" style="color:var(--mute);font-weight:400"></span></h1><span id="msg"></span></header>
+
+  <section class="card">
+    <div class="view"><iframe id="live" allow="autoplay; fullscreen" title="Live view"></iframe></div>
+    <div class="bar">
+      <button class="primary" id="snap">Snapshot</button>
+      <button id="ir" hidden>IR light: off</button>
+      <button id="reload">Reload stream</button>
+      <button id="rot">Rotate 180°</button>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="stats" id="stats"></div>
+  </section>
+
+  <section class="card" id="ctl">
+    <div class="row sel"><label>Autofocus</label>
+      <select data-k="rpiCameraAfMode"><option>continuous</option><option>auto</option><option>manual</option></select></div>
+    <div class="row"><label>Focus (manual)</label><input type="range" data-k="rpiCameraLensPosition" min="0" max="10" step="0.1"><output></output></div>
+    <div class="row"><label>Brightness</label><input type="range" data-k="rpiCameraBrightness" min="-1" max="1" step="0.05"><output></output></div>
+    <div class="row"><label>Contrast</label><input type="range" data-k="rpiCameraContrast" min="0" max="4" step="0.1"><output></output></div>
+    <div class="row"><label>Saturation</label><input type="range" data-k="rpiCameraSaturation" min="0" max="4" step="0.1"><output></output></div>
+    <div class="row"><label>Exposure comp.</label><input type="range" data-k="rpiCameraEV" min="-4" max="4" step="0.25"><output></output></div>
+    <div class="row sel"><label>Exposure mode</label>
+      <select data-k="rpiCameraExposure"><option>normal</option><option>short</option><option>long</option></select></div>
+    <div class="row sel"><label>FPS</label>
+      <select data-k="rpiCameraFPS" data-num><option>5</option><option>10</option><option>15</option><option>24</option><option>30</option></select></div>
+    <div class="row sel"><label>HDR</label><input type="checkbox" data-k="rpiCameraHDR"></div>
+    <div class="row sel"><label>Flip horizontal</label><input type="checkbox" data-k="rpiCameraHFlip"></div>
+    <div class="row sel"><label>Flip vertical</label><input type="checkbox" data-k="rpiCameraVFlip"></div>
+  </section>
+</main>
+<script>
+const $ = (s, r = document) => r.querySelector(s);
+const msg = $('#msg');
+function say(t, err) { msg.textContent = t; msg.className = err ? 'err' : ''; }
+async function api(path, body) {
+  const r = await fetch(path, body === undefined ? {} : {
+    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || r.statusText);
+  return j;
+}
+function live() { $('#live').src = `http://${location.hostname}:8889/cam`; }
+
+async function loadSettings() {
+  try {
+    const s = await api('/api/settings');
+    for (const el of document.querySelectorAll('[data-k]')) {
+      const v = s[el.dataset.k];
+      if (v == null) continue;
+      if (el.type === 'checkbox') el.checked = !!v; else el.value = v;
+      const o = el.parentElement.querySelector('output'); if (o) o.textContent = el.value;
+    }
+  } catch (e) { say(e.message, true); }
+}
+let timer;
+$('#ctl').addEventListener('input', e => {
+  const el = e.target, k = el.dataset.k; if (!k) return;
+  const o = el.parentElement.querySelector('output'); if (o) o.textContent = el.value;
+  const v = el.type === 'checkbox' ? el.checked : (el.type === 'range' || 'num' in el.dataset ? Number(el.value) : el.value);
+  clearTimeout(timer);
+  timer = setTimeout(async () => {
+    try { await api('/api/settings', {[k]: v}); say('Saved'); } catch (err) { say(err.message, true); }
+  }, 250);
+});
+
+$('#snap').onclick = () => window.open('/api/snapshot', '_blank');
+$('#reload').onclick = live;
+$('#rot').onclick = async () => {
+  const h = $('[data-k=rpiCameraHFlip]'), v = $('[data-k=rpiCameraVFlip]');
+  const on = !(h.checked && v.checked);
+  try {
+    await api('/api/settings', {rpiCameraHFlip: on, rpiCameraVFlip: on});
+    h.checked = v.checked = on; say(on ? 'Rotated 180°' : 'Rotation off');
+    setTimeout(live, 1500);
+  } catch (e) { say(e.message, true); }
+};
+let irOn = false;
+$('#ir').onclick = async () => {
+  try { irOn = (await api('/api/ir', {on: !irOn})).on; $('#ir').textContent = 'IR light: ' + (irOn ? 'on' : 'off'); }
+  catch (e) { say(e.message, true); }
+};
+
+function fmtUp(s) { const d = Math.floor(s/86400), h = Math.floor(s%86400/3600), m = Math.floor(s%3600/60); return d ? `${d}d ${h}h` : `${h}h ${m}m`; }
+async function loadStatus() {
+  try {
+    const s = await api('/api/status');
+    $('#host').textContent = s.host;
+    if (s.ir_pin) $('#ir').hidden = false;
+    const t = s.throttled && s.throttled !== '0x0' ? ' (throttled)' : '';
+    $('#stats').innerHTML = [
+      ['CPU temp', s.cpu_temp_c == null ? '-' : s.cpu_temp_c + ' °C' + t],
+      ['Uptime', s.uptime_s == null ? '-' : fmtUp(s.uptime_s)],
+      ['Load', s.load ? s.load.join(' ') : '-'],
+    ].map(([k, v]) => `<div class="stat"><b>${v}</b><span>${k}</span></div>`).join('');
+  } catch (e) { say(e.message, true); }
+}
+live(); loadSettings(); loadStatus(); setInterval(loadStatus, 10000);
+</script>
+</body>
+</html>
